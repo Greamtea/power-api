@@ -116,11 +116,3 @@ async def check_power_outage(city: str, street: str, house: str):
     except Exception as e:
         print(f"\nПроизошла непредвиденная ошибка: {e}")
         return {"error": f"Внутренняя ошибка сервера: {e}"}
-
-# --- НОВОЕ: Команда для запуска "движка" ---
-# Эта часть нужна, чтобы мы могли запустить этот файл
-if __name__ == "__main__":
-    print("--- Запуск локального API-сервера на http://127.0.0.1:8000 ---")
-    print("Чтобы остановить, нажми CTRL+C")
-
-    uvicorn.run(app, host="127.0.0.1", port=8000)
