@@ -9,7 +9,7 @@ import re
 # --- Створюємо "мозок" ---
 app = FastAPI()
 
-# --- Глобальні константи ---
+# -- Глобальні константи ---
 DTEK_URL = 'https://www.dtek-dnem.com.ua'
 SHUTDOWNS_PAGE = DTEK_URL + '/ua/shutdowns'
 AJAX_URL = DTEK_URL + '/ua/ajax'
