@@ -61,6 +61,13 @@ def find_block_end(schedule_today: dict, schedule_tomorrow: dict, start_hour_ind
         if status not in OUTAGE_STATES:
             # Знайшли кінець! Це початок "світлої" зони
             _start, end_time = get_time_range(hour_key, "yes", time_zone_map)
+            # ✅ ВИПРАВЛЕННЯ БАГУ 1:30: Перевіряємо, чи попередня година не була 'first'
+            prev_hour_key = str(i)
+            prev_status = schedule_today.get(prev_hour_key)
+            if prev_status in ("first", "mfirst"):
+                _start_prev, end_time_prev = get_time_range(prev_hour_key, prev_status, time_zone_map)
+                return end_time_prev, "" # Повертаємо 01:30, а не 02:00
+                
             return end_time, "" # Повертаємо час початку "yes"
 
     # 2. Якщо о 24:00 (індекс 23) світла ще немає, шукаємо кінець завтра
@@ -71,6 +78,19 @@ def find_block_end(schedule_today: dict, schedule_tomorrow: dict, start_hour_ind
         if status not in OUTAGE_STATES:
             # Знайшли кінець!
             _start, end_time = get_time_range(hour_key, "yes", time_zone_map)
+             # ✅ ВИПРАВЛЕННЯ БАГУ 1:30: Перевіряємо, чи попередня година не була 'first'
+            prev_hour_key = str(i)
+            if i == 0: # Якщо це 00:00, попередня година - 24:00 (сьогодні)
+                prev_status = schedule_today.get("24")
+            else:
+                prev_status = schedule_tomorrow.get(prev_hour_key)
+
+            if prev_status in ("first", "mfirst"):
+                _start_prev, end_time_prev = get_time_range(prev_hour_key, prev_status, time_zone_map)
+                if i == 0: # Спеціальний випадок для 00:30
+                     return "00:30", " (наступного дня)"
+                return end_time_prev, " (наступного дня)"
+
             return end_time, " (наступного дня)"
 
     return "24:00", " (наступного дня)" # Якщо відключення триває весь завтрашній день
@@ -179,19 +199,19 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
 
         # 2. Знаходимо "сховані" графіки
         
-        # ✅ ВИПРАВЛЕННЯ: Ми беремо 'fact' (верхній графік), а не 'preset' (нижній)
+        # ✅ Ми беремо 'fact' (верхній графік), а не 'preset' (нижній)
         fact = json_data.get("fact")
         if not fact:
             return {"status": "error", "message": "Не можу знайти 'fact' (графік на сьогодні) у JSON."}
 
-        # ✅ ВИПРАВЛЕННЯ: Беремо 'preset' ТІЛЬКИ для карти часових поясів
+        # ✅ Беремо 'preset' ТІЛЬКИ для карти часових поясів
         preset = json_data.get("preset")
         if not preset:
              return {"status": "error", "message": "Не можу знайти 'preset' (тижневий графік) у JSON."}
         
         time_zone_map = preset.get("time_zone", {})
         
-        # --- ✅ ВИПРАВЛЕННЯ: Знаходимо графіки на сьогодні і завтра з "fact" ---
+        # --- Знаходимо графіки на сьогодні і завтра з "fact" ---
         
         today_timestamp_key = str(fact.get("today", 0))
         fact_data = fact.get("data", {})
