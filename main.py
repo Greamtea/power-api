@@ -16,7 +16,7 @@ AJAX_URL = DTEK_URL + '/ua/ajax'
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 
 # --- Словник станів ---
-# "Світла немає" або "Може не бути"
+# "Світла немає" або "Може не бути" (з будь-якого графіка)
 OUTAGE_STATES = ("no", "first", "second", "mfirst", "msecond", "maybe")
 
 # --- Допоміжні функції ---
@@ -178,29 +178,44 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         group_name = group_name_list[0] # "GPV6.1"
 
         # 2. Знаходимо "сховані" графіки
+        
+        # ✅ ВИПРАВЛЕННЯ: Ми беремо 'fact' (верхній графік), а не 'preset' (нижній)
+        fact = json_data.get("fact")
+        if not fact:
+            return {"status": "error", "message": "Не можу знайти 'fact' (графік на сьогодні) у JSON."}
+
+        # ✅ ВИПРАВЛЕННЯ: Беремо 'preset' ТІЛЬКИ для карти часових поясів
         preset = json_data.get("preset")
         if not preset:
-            return {"status": "error", "message": "Не можу знайти 'preset' (тижневий графік) у JSON."}
-
+             return {"status": "error", "message": "Не можу знайти 'preset' (тижневий графік) у JSON."}
+        
         time_zone_map = preset.get("time_zone", {})
         
-        # (Понеділок = 0, ... Неділя = 6). Сайт ДТЕК: Понеділок = 1.
-        today_index = now.weekday() + 1
-        current_day_of_week_key = str(today_index) 
+        # --- ✅ ВИПРАВЛЕННЯ: Знаходимо графіки на сьогодні і завтра з "fact" ---
         
-        # ✅ Отримуємо ключ на завтра (1->2, 6->7, 7->1)
-        tomorrow_index = (today_index % 7) + 1
-        tomorrow_day_of_week_key = str(tomorrow_index)
+        today_timestamp_key = str(fact.get("today", 0))
+        fact_data = fact.get("data", {})
         
-        schedule_all_groups = preset.get("data", {}).get(group_name)
-        if not schedule_all_groups:
-             return {"status": "error", "message": f"Не можу знайти групу {group_name} у 'preset'."}
+        # Знаходимо ключ "завтра"
+        all_fact_keys = list(fact_data.keys())
+        tomorrow_timestamp_key = None
+        for key in all_fact_keys:
+            if key != today_timestamp_key:
+                tomorrow_timestamp_key = key
+                break
+        
+        schedule_today_all_groups = fact_data.get(today_timestamp_key)
+        schedule_tomorrow_all_groups = fact_data.get(tomorrow_timestamp_key, {}) # {} = порожній
+        
+        if not schedule_today_all_groups:
+             return {"status": "error", "message": f"Не можу знайти графік на сьогодні ({today_timestamp_key})."}
 
-        schedule_today = schedule_all_groups.get(current_day_of_week_key)
-        schedule_tomorrow = schedule_all_groups.get(tomorrow_day_of_week_key, {}) # {} = порожній графік
+        schedule_today = schedule_today_all_groups.get(group_name)
+        schedule_tomorrow = schedule_tomorrow_all_groups.get(group_name, {})
         
         if not schedule_today:
-             return {"status": "error", "message": f"Не можу знайти графік на сьогодні (день {current_day_of_week_key})."}
+             return {"status": "error", "message": f"Не можу знайти групу {group_name} у 'fact' графіку."}
+
 
         # --- Аналіз графіка ---
         current_hour_index = now.hour # 0-23
