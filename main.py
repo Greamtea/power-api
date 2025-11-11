@@ -47,14 +47,15 @@ def get_time_range(hour_key: str, status: str, time_zone_map: dict) -> (str, str
         
     return start_time, end_time
 
-def find_block_end(schedule_today: dict, schedule_tomorrow: dict, current_hour_key: str, time_zone_map: dict) -> (str, str):
-    """Знаходить час закінчення поточного блоку відключень."""
-    current_hour_index = int(current_hour_key) # Поточна година (1-24)
-    end_time_suffix = ""
+def find_block_end(schedule_today: dict, schedule_tomorrow: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
+    """
+    Знаходить час закінчення поточного блоку відключень.
+    start_hour_index: 0-23 (поточна година)
+    """
     
-    # 1. Шукаємо кінець сьогодні
-    for i in range(current_hour_index, 25): # 25, бо range не включає останнє
-        hour_key = str(i)
+    # 1. Шукаємо кінець сьогодні (починаючи з НАСТУПНОЇ години)
+    for i in range(start_hour_index + 1, 24): # 0-23 -> 1-24
+        hour_key = str(i + 1)
         status = schedule_today.get(hour_key)
         
         if status not in OUTAGE_STATES:
@@ -62,9 +63,9 @@ def find_block_end(schedule_today: dict, schedule_tomorrow: dict, current_hour_k
             _start, end_time = get_time_range(hour_key, "yes", time_zone_map)
             return end_time, "" # Повертаємо час початку "yes"
 
-    # 2. Якщо о 24:00 світла ще немає, шукаємо кінець завтра
-    for i in range(1, 25):
-        hour_key = str(i)
+    # 2. Якщо о 24:00 (індекс 23) світла ще немає, шукаємо кінець завтра
+    for i in range(0, 24): # 0-23
+        hour_key = str(i + 1)
         status = schedule_tomorrow.get(hour_key)
         
         if status not in OUTAGE_STATES:
@@ -74,73 +75,49 @@ def find_block_end(schedule_today: dict, schedule_tomorrow: dict, current_hour_k
 
     return "24:00", " (наступного дня)" # Якщо відключення триває весь завтрашній день
 
-def find_next_block(schedule_today: dict, schedule_tomorrow: dict, current_hour_key: str, time_zone_map: dict) -> (str, str, str):
-    """Знаходить час початку та кінця НАСТУПНОГО блоку."""
-    current_hour_index = int(current_hour_key) # Поточна година (1-24)
+def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_index: int, time_zone_map: dict) -> (str, str, str):
+    """
+    Знаходить час початку та кінця НАСТУПНОГО блоку.
+    start_hour_index: 0-23 (поточна година)
+    """
     
     start_time = None
     end_time = None
     end_day_suffix = ""
 
-    # 1. Шукаємо ПОЧАТОК наступного блоку сьогодні
-    for i in range(current_hour_index + 1, 25): # Починаємо з НАСТУПНОЇ години
-        hour_key = str(i)
+    # 1. Шукаємо ПОЧАТОК наступного блоку СЬОГОДНІ
+    # (починаючи з НАСТУПНОЇ години)
+    for i in range(start_hour_index + 1, 24): 
+        hour_key = str(i + 1) # 1-24
         status = schedule_today.get(hour_key)
         
         if status in OUTAGE_STATES:
             # Знайшли початок!
-            start_time, end_time = get_time_range(hour_key, status, time_zone_map)
+            start_time, _end = get_time_range(hour_key, status, time_zone_map)
             
             # 2. Тепер шукаємо КІНЕЦЬ цього блоку
-            # (Ми вже знаємо, що він закінчиться о 'end_time', шукаємо, чи він не довший)
-            for j in range(i + 1, 25):
-                next_hour_key = str(j)
-                next_status = schedule_today.get(next_hour_key)
-                
-                if next_status in OUTAGE_STATES:
-                    # Блок продовжується, оновлюємо час кінця
-                    _s, end_time = get_time_range(next_hour_key, next_status, time_zone_map)
-                else:
-                    # Блок закінчився
-                    break
-            else:
-                # Якщо ми дійшли до кінця дня (24:00) і світло все ще 'no'
-                # Нам потрібно перевірити 00:00 завтра
-                first_hour_tomorrow_status = schedule_tomorrow.get("1")
-                if first_hour_tomorrow_status in OUTAGE_STATES:
-                    # ✅ БАГ ПЕРЕХОДУ ЧЕРЕЗ ПІВНІЧ:
-                    # Шукаємо кінець блоку завтра
-                    end_time, end_day_suffix = find_block_end(schedule_tomorrow, {}, "1", time_zone_map)
-                    return start_time, end_time, end_day_suffix
-
-            return start_time, end_time, "" # Повертаємо блок, що починається сьогодні
+            end_time, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, i, time_zone_map)
+            
+            return start_time, end_time, end_day_suffix
 
     # 3. Якщо СЬОГОДНІ більше нічого немає, шукаємо ПОЧАТОК блоку ЗАВТРА
-    for i in range(1, 25):
-        hour_key = str(i)
+    for i in range(0, 24):
+        hour_key = str(i + 1) # 1-24
         status = schedule_tomorrow.get(hour_key)
         
         if status in OUTAGE_STATES:
             # Знайшли початок!
-            start_time, end_time = get_time_range(hour_key, status, time_zone_map)
-            end_day_suffix = " (наступного дня)"
+            start_time, _end = get_time_range(hour_key, status, time_zone_map)
             
             # 4. Шукаємо КІНЕЦЬ цього завтрашнього блоку
-            for j in range(i + 1, 25):
-                next_hour_key = str(j)
-                next_status = schedule_tomorrow.get(next_hour_key)
-                
-                if next_status in OUTAGE_STATES:
-                    _s, end_time = get_time_range(next_hour_key, next_status, time_zone_map)
-                else:
-                    break
+            end_time, _suffix = find_block_end(schedule_tomorrow, {}, i, time_zone_map) # Pass empty dict for "day after tomorrow"
             
-            return start_time, end_time, end_day_suffix
+            return start_time, end_time, " (наступного дня)"
 
     return None, None, None # Більше відключень немає
 
 
-# --- Головний метод (ендпоінт) ---
+# --- Головний метод (ендпоіінт) ---
 @app.get("/check")
 async def check_power_outage(city: str = "", street: str = "", house: str = ""):
     
@@ -211,7 +188,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         today_index = now.weekday() + 1
         current_day_of_week_key = str(today_index) 
         
-        # ✅ НОВЕ: Отримуємо ключ на завтра (1->2, 6->7, 7->1)
+        # ✅ Отримуємо ключ на завтра (1->2, 6->7, 7->1)
         tomorrow_index = (today_index % 7) + 1
         tomorrow_day_of_week_key = str(tomorrow_index)
         
@@ -220,15 +197,15 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
              return {"status": "error", "message": f"Не можу знайти групу {group_name} у 'preset'."}
 
         schedule_today = schedule_all_groups.get(current_day_of_week_key)
-        schedule_tomorrow = schedule_all_groups.get(tomorrow_day_of_week_key)
+        schedule_tomorrow = schedule_all_groups.get(tomorrow_day_of_week_key, {}) # {} = порожній графік
         
-        if not schedule_today or not schedule_tomorrow:
-             return {"status": "error", "message": f"Не можу знайти графік на сьогодні/завтра."}
+        if not schedule_today:
+             return {"status": "error", "message": f"Не можу знайти графік на сьогодні (день {current_day_of_week_key})."}
 
         # --- Аналіз графіка ---
-        current_hour_index = now.hour # Наприклад, 19 (для 19:30)
-        current_hour_key = str(current_hour_index + 1) # Ключ для 19:00 - "20"
-        current_minute = now.minute # 30
+        current_hour_index = now.hour # 0-23
+        current_hour_key = str(current_hour_index + 1) # 1-24
+        current_minute = now.minute 
 
         current_status = schedule_today.get(current_hour_key)
         if not current_status or not time_zone_map.get(current_hour_key):
@@ -237,14 +214,10 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # 3. Перевіряємо, чи світло вимкнене ЗАРАЗ
         if is_off_now(current_status, current_minute):
             
-            start_time, end_time = get_time_range(current_hour_key, current_status, time_zone_map)
+            start_time, _ = get_time_range(current_hour_key, current_status, time_zone_map)
             
             # Шукаємо, коли цей блок закінчиться (можливо, завтра)
-            block_end, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, current_hour_index + 1, time_zone_map)
-            
-            # Якщо find_block_end нічого не повернув (дивний випадок), беремо поточний end_time
-            if not block_end:
-                block_end = end_time
+            block_end, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
 
             return {
                 "status": "warning", # "warning" = світла немає ЗАРАЗ
@@ -255,7 +228,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
             }
 
         # 4. Якщо світло ЗАРАЗ є, шукаємо НАСТУПНЕ відключення
-        next_start, next_end, end_day_suffix = find_next_block(schedule_today, schedule_tomorrow, current_hour_index + 1, time_zone_map)
+        next_start, next_end, end_day_suffix = find_next_block(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
         
         if next_start and next_end:
              return {
