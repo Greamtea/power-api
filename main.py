@@ -81,8 +81,6 @@ def expand_schedule(raw_schedule: dict, time_zone_map: dict) -> dict:
 
     return expanded_schedule
 
-
-# ✅ ВИПРАВЛЕНА ФУНКЦІЯ find_block_end (Виправлення логіки 01:30)
 def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
     """
     Знаходить час закінчення поточного блоку відключень, враховуючи 30-хвилинні інтервали.
@@ -296,20 +294,23 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         if yellow_data and yellow_data['is_active_outage']:
              return {
                 "status": "warning",
-                "message": f"Світла немає. Причина: {yellow_data['reason']}",
-                "start_time": yellow_data['start_time'],
-                "end_time": yellow_data['end_time'] + yellow_data['end_time_suffix'],
-                "type": "Фактичне відключення",
                 "group": group_name,
                 "today_schedule": schedule_today,
-                "tomorrow_schedule": schedule_tomorrow
+                "tomorrow_schedule": schedule_tomorrow,
+                "active_outage_info": { # ✅ Додаємо повну інформацію з жовтої рамки
+                    "reason": yellow_data['reason'],
+                    "start_time": yellow_data['start_time'],
+                    "end_time": yellow_data['end_time'],
+                    "end_time_suffix": yellow_data['end_time_suffix'],
+                    "type": "Фактичне відключення"
+                }
             }
         
         # --- Крок 4: АНАЛІЗУЄМО ГРАФІК (Якщо немає жовтої рамки) ---
         
         if not schedule_today:
              # ✅ Виправлено: Повертаємо "Світло є!"
-             return {"status": "ok", "message": "Світло є!", "start_time": "", "end_time": "", "type": "Планове (Згідно з графіком)", "group": group_name, "today_schedule": {}, "tomorrow_schedule": {}}
+             return {"status": "ok", "group": group_name, "today_schedule": {}, "tomorrow_schedule": {}}
 
 
         # --- Аналіз графіка ---
@@ -322,18 +323,21 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # 5. Перевіряємо, чи світло вимкнене ЗАРАЗ (за графіком)
         if is_off_now(current_status, current_minute):
             
-            start_time, _ = get_time_range(current_hour_key, current_status, time_zone_map)
-            block_end, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
+            # ❗ Оскільки ви просили видалити start_time/end_time з фінального об'єкту, 
+            # ми не повертаємо його тут, але залишаємо обчислення для розуміння.
 
             return {
                 "status": "warning",
-                "message": f"Світла немає (до {block_end}{end_day_suffix})",
-                "start_time": start_time,
-                "end_time": block_end,
-                "type": "Планове (Згідно з графіком)",
                 "group": group_name,
                 "today_schedule": schedule_today,
-                "tomorrow_schedule": schedule_tomorrow
+                "tomorrow_schedule": schedule_tomorrow,
+                "active_outage_info": { # ✅ Додаємо інформацію про поточне планове відключення
+                    "reason": "Планове (Згідно з графіком)",
+                    "start_time": get_time_range(current_hour_key, current_status, time_zone_map)[0],
+                    "end_time": find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)[0],
+                    "end_time_suffix": find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)[1],
+                    "type": "Планове"
+                }
             }
 
         # 6. Якщо світло ЗАРАЗ є, шукаємо НАСТУПНЕ відключення
@@ -342,23 +346,20 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         if next_start and next_end:
              return {
                 "status": "ok",
-                "message": f"Відключення з {next_start} до {next_end}{end_day_suffix}",
-                "start_time": next_start,
-                "end_time": next_end,
-                "type": "Планове (Згідно з графіком)",
                 "group": group_name,
                 "today_schedule": schedule_today,
-                "tomorrow_schedule": schedule_tomorrow
+                "tomorrow_schedule": schedule_tomorrow,
+                "next_outage_info": { # ✅ Додаємо інформацію про наступне планове відключення
+                    "start_time": next_start,
+                    "end_time": next_end,
+                    "end_time_suffix": end_day_suffix,
+                    "type": "Планове"
+                }
             }
 
         # 7. Якщо сьогодні і завтра нічого немає
         return {
             "status": "ok",
-            # ✅ Виправлено: Повертаємо "Світло є!"
-            "message": "Світло є!", 
-            "start_time": "",
-            "end_time": "",
-            "type": "Планове (Згідно з графіком)",
             "group": group_name,
             "today_schedule": schedule_today,
             "tomorrow_schedule": schedule_tomorrow
