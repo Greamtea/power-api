@@ -160,7 +160,6 @@ def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_in
 def parse_yellow_info(html_content: str):
     """Парсить інформацію з жовтої рамки (активне відключення)."""
     soup = BeautifulSoup(html_content, 'html.parser')
-    # ✅ ВИПРАВЛЕНО: Шукаємо "discon-current-outage" - це і є жовта рамка
     yellow_div = soup.find('div', {'class': 'discon-current-outage'})
     
     if not yellow_div: return None
@@ -304,7 +303,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1 - Фактичні відключення) ---
         yellow_data = parse_yellow_info(json_data.get("content", ""))
         
-        # ✅ ВИПРАВЛЕННЯ: Якщо жовта рамка є, повертаємо її дані, ІГНОРУЮЧИ графік!
+        # ✅ ВИПРАВЛЕННЯ ЛОГІКИ: Якщо жовта рамка є, повертаємо її дані.
         if yellow_data and yellow_data['is_active_outage']:
              return {
                 "status": "warning",
