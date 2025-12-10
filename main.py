@@ -21,6 +21,7 @@ POWER_ON_STATES = ("yes", "cell-non-scheduled")
 
 # --- Допоміжні функції ---
 
+# Ця функція тепер використовується ТІЛЬКИ для розширення графіка, а не для логіки статусу API.
 def is_off_now(status: str, minute: int) -> bool:
     """Перевіряє, чи вимкнено світло в поточну хвилину."""
     if status in ('no', 'maybe'):
@@ -64,98 +65,26 @@ def expand_schedule(raw_schedule: dict, time_zone_map: dict) -> dict:
         time_00 = f"{start_hour}:00"
         time_30 = f"{start_hour}:30"
         
+        # Визначаємо статус для 30-хвилинних блоків
+        status_on = "on"
+        status_off = "off"
+        
         if status == 'yes' or status == 'cell-non-scheduled':
-            expanded_schedule[time_00] = "on"
-            expanded_schedule[time_30] = "on"
+            expanded_schedule[time_00] = status_on
+            expanded_schedule[time_30] = status_on
         elif status == 'no' or status == 'maybe':
-            expanded_schedule[time_00] = "off"
-            expanded_schedule[time_30] = "off"
+            expanded_schedule[time_00] = status_off
+            expanded_schedule[time_30] = status_off
         elif status == 'first' or status == 'mfirst':
             # Світла немає перші 30 хв (off-on)
-            expanded_schedule[time_00] = "off"
-            expanded_schedule[time_30] = "on"
+            expanded_schedule[time_00] = status_off
+            expanded_schedule[time_30] = status_on
         elif status == 'second' or status == 'msecond':
             # Світла немає другі 30 хв (on-off)
-            expanded_schedule[time_00] = "on"
-            expanded_schedule[time_30] = "off"
+            expanded_schedule[time_00] = status_on
+            expanded_schedule[time_30] = status_off
 
     return expanded_schedule
-
-def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
-    """
-    Знаходить час закінчення поточного блоку відключень, враховуючи 30-хвилинні інтервали.
-    start_hour_index: час, з якого почалося відключення (0-23).
-    """
-    
-    # 1. Шукаємо кінець сьогодні
-    for i in range(start_hour_index, 24):
-        hour_key = str(i + 1)
-        status = schedule_current.get(hour_key)
-        
-        if status in POWER_ON_STATES or status is None:
-            # Знайшли годину, де світло є. Визначаємо точний час закінчення відключення.
-            
-            if status == 'yes' or status == 'cell-non-scheduled':
-                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
-                return _start_on, ""
-            
-            if status in ("first", "mfirst"):
-                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
-                return _start_on, ""
-            
-            if status in ("second", "msecond"):
-                _start, end_time = get_time_range(hour_key, status, time_zone_map) # end_time = XX:30
-                return end_time, ""
-            
-    
-    # 2. Якщо дійшли до 24:00, перевіряємо завтра
-    for i in range(0, 24):
-        hour_key = str(i + 1)
-        status = schedule_next_day.get(hour_key)
-        
-        if status in POWER_ON_STATES or status is None:
-            # Знайшли годину, де світло є.
-            _start_on, _ = get_time_range(hour_key, status, time_zone_map)
-            
-            if status == 'yes' or status == 'cell-non-scheduled' or status in ("first", "mfirst"):
-                return _start_on, " (наступного дня)"
-                
-            if status in ("second", "msecond"):
-                 _start, end_time = get_time_range(hour_key, status, time_zone_map)
-                 return end_time, " (наступного дня)"
-
-    # Якщо відключення йде до кінця графіка
-    return "24:00", " (наступного дня)"
-
-def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_index: int, time_zone_map: dict) -> (str, str, str):
-    """Знаходить час початку та кінця НАСТУПНОГО блоку."""
-    
-    # 1. Шукаємо ПОЧАТОК наступного блоку СЬОГОДНІ
-    for i in range(start_hour_index + 1, 24): 
-        hour_key = str(i + 1)
-        status = schedule_today.get(hour_key)
-        
-        if status in OUTAGE_STATES:
-            start_time, _ = get_time_range(hour_key, status, time_zone_map)
-            
-            # Находимо кінець цього блоку, використовуючи schedule_tomorrow
-            end_time, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, i, time_zone_map)
-            return start_time, end_time, end_day_suffix
-
-    # 2. Якщо СЬОГОДНІ більше нічого немає, шукаємо НАЧАЛО блока ЗАВТРА
-    for i in range(0, 24):
-        hour_key = str(i + 1)
-        status = schedule_tomorrow.get(hour_key)
-        
-        if status in OUTAGE_STATES:
-            start_time, _ = get_time_range(hour_key, status, time_zone_map)
-            
-            # Находимо кінець цього блоку (завтрашній графік)
-            end_time, _suffix = find_block_end(schedule_tomorrow, {}, i, time_zone_map) 
-            
-            return start_time, end_time, " (наступного дня)"
-
-    return None, None, None
 
 def parse_yellow_info(html_content: str):
     """Парсить інформацію з жовтої рамки (активне відключення)."""
@@ -165,36 +94,31 @@ def parse_yellow_info(html_content: str):
     if not yellow_div: return None
 
     # Причина
-    # ✅ ВИПРАВЛЕННЯ: Більш надійний regex для причини (витягуємо все між "Причина:" та наступним ключовим словом)
-    reason_match = re.search(r'Причина:\s*(.*?)\s*(Час початку|Орієнтовний час)', yellow_div.text, re.DOTALL)
+    reason_match = re.search(r'Причина:\s*(.*?)\s*(Час початку|Орієнтовний час|Дата оновлення)', yellow_div.text, re.DOTALL)
     reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
     # Час початку (Час початку)
-    # ✅ ВИПРАВЛЕННЯ: Спрощений regex для часу (тільки 00:00)
-    start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})', yellow_div.text)
+    start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})\s*(\d{2}\.\d{2}\.\d{4})', yellow_div.text)
     start_time = start_time_match.group(1).strip() if start_time_match else None
-    
-    # Час відновлення (Орієнтовний час відновлення)
-    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})', yellow_div.text)
-    end_time = end_time_match.group(1).strip() if end_time_match else None
+    start_date = start_time_match.group(2).strip() if start_time_match else None
 
-    # Проверяємо, чи переходить через північ 
+    # Час відновлення (Орієнтовний час відновлення)
+    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})\s*(\d{2}\.\d{2}\.\d{4})', yellow_div.text)
+    end_time = end_time_match.group(1).strip() if end_time_match else None
+    end_date = end_time_match.group(2).strip() if end_time_match else None
+
+    # Визначаємо, чи переходить через північ
     end_time_suffix = ""
-    if start_time and end_time:
-        try:
-            start_dt = datetime.strptime(start_time, '%H:%M')
-            end_dt = datetime.strptime(end_time, '%H:%M')
-            if end_dt < start_dt:
-                 end_time_suffix = " (наступного дня)"
-        except ValueError:
-            pass
-            
+    if start_date and end_date and start_date != end_date:
+        end_time_suffix = " (наступного дня)"
+
     return {
         "is_active_outage": True,
         "reason": reason,
         "start_time": start_time, 
         "end_time": end_time,
-        "end_time_suffix": end_time_suffix
+        "end_time_suffix": end_time_suffix,
+        "type": "Фактичне відключення"
     }
 
 def get_day_schedules(fact_data: dict, group_name: str, time_zone_map: dict, now: datetime) -> (dict, dict):
@@ -283,13 +207,13 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         schedule_today, schedule_tomorrow = get_day_schedules(fact, group_name, time_zone_map, now)
         
         # ---
-        # Визначаємо поточний статус, перевіряючи, чи активне відключення
+        # Визначаємо поточний статус
         # ---
         
         current_hour_index = now.hour
         current_minute = now.minute
         
-        # Поточний статус з графіку на сьогодні
+        # Поточний статус з графіку на сьогодні (для перевірки)
         raw_schedule_today = fact.get("data", {}).get(str(fact.get("today", 0)), {}).get(group_name, {})
         current_status_raw = raw_schedule_today.get(str(current_hour_index + 1))
         
@@ -301,7 +225,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1 - Фактичні відключення) ---
         yellow_data = parse_yellow_info(json_data.get("content", ""))
         
-        # ✅ ЛОГІКА: Якщо жовта рамка є, повертаємо її дані, ігноруючи графік для поточного статусу.
+        # ✅ ВИПРАВЛЕННЯ ЛОГІКИ: Якщо жовта рамка є, повертаємо її дані.
         if yellow_data and yellow_data['is_active_outage']:
              return {
                 "status": "warning",
@@ -375,11 +299,3 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
-```
-
-**Пояснення змін:**
-
-1.  **Посилено пріоритет (Крок 3):** Я підтвердив логіку, що якщо `yellow_data` успішно розпарсено, ми **завжди** повертаємо `status: "warning"` з цими фактичними даними, не даючи можливості плановому графіку переписати цей статус.
-2.  **Надійний парсинг причини (Bugfix):** У `parse_yellow_info` я зробив вираз для причини більш гнучким:
-    ```python
-    reason_match = re.search(r'Причина:\s*(.*?)\s*(Час початку|Орієнтовний час)', yellow_div.text, re.DOTALL)
