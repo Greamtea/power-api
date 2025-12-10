@@ -165,19 +165,17 @@ def parse_yellow_info(html_content: str):
     if not yellow_div: return None
 
     # Причина
-    # Ми беремо текст до "Час початку" або "Орієнтовний час"
-    reason_match = re.search(r'Причина:\s*(.*?)\s*Час початку', yellow_div.text, re.DOTALL)
-    if not reason_match:
-        reason_match = re.search(r'Причина:\s*(.*?)Орієнтовний час', yellow_div.text, re.DOTALL)
-
+    # ✅ ВИПРАВЛЕННЯ: Більш надійний regex для причини
+    reason_match = re.search(r'Причина:\s*(.*?)(\s*Час початку|\s*Орієнтовний час)', yellow_div.text, re.DOTALL)
     reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
     # Час початку (Час початку)
-    start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
+    # ✅ ВИПРАВЛЕННЯ: Спрощений regex для часу (тільки 00:00)
+    start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})', yellow_div.text)
     start_time = start_time_match.group(1).strip() if start_time_match else None
     
     # Час відновлення (Орієнтовний час відновлення)
-    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
+    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})', yellow_div.text)
     end_time = end_time_match.group(1).strip() if end_time_match else None
 
     # Проверяємо, чи переходить через північ 
