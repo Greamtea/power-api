@@ -15,10 +15,21 @@ AJAX_URL = DTEK_URL + '/ua/ajax'
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
 
 # --- Словник станів ---
+# "Світла немає" або "Може не бути" (з будь-якого графіка)
 OUTAGE_STATES = ("no", "first", "second", "mfirst", "msecond", "maybe")
 POWER_ON_STATES = ("yes", "cell-non-scheduled")
 
 # --- Допоміжні функції ---
+
+def is_off_now(status: str, minute: int) -> bool:
+    """Перевіряє, чи вимкнено світло в поточну хвилину."""
+    if status == 'no' or status == 'maybe':
+        return True
+    if (status == 'first' or status == 'mfirst') and minute < 30:
+        return True
+    if (status == 'second' or status == 'msecond') and minute >= 30:
+        return True
+    return False
 
 def get_time_range(hour_key: str, status: str, time_zone_map: dict) -> (str, str):
     """Повертає точний час початку та кінця для 30-хв блоків."""
@@ -40,28 +51,40 @@ def get_time_range(hour_key: str, status: str, time_zone_map: dict) -> (str, str
         
     return start_time, end_time
 
+# ✅ ВИПРАВЛЕННЯ ЛОГІКИ: Тепер коректно обробляємо 30-хвилинні переходи та перехід через північ
 def find_block_end(schedule_today: dict, schedule_tomorrow: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
     """Знаходить час закінчення поточного блоку відключень."""
     
-    # 1. Шукаємо кінець сьогодні (починаючи з НАСТУПНОЇ години)
-    for i in range(start_hour_index + 1, 24):
+    # 1. Шукаємо кінець сьогодні (починаючи з години, в якій почалося відключення)
+    for i in range(start_hour_index, 24):
         hour_key = str(i + 1)
         status = schedule_today.get(hour_key)
         
-        if status not in OUTAGE_STATES:
-            # ✅ Знайшли кінець! Це початок "світлої" зони
+        # Якщо ми знаходимо годину, в якій світло Є (або частково є)
+        if status in POWER_ON_STATES:
             _start, end_time = get_time_range(hour_key, status, time_zone_map)
-            return end_time, ""
-
+            
+            # Якщо поточна "світла" година має статус "second" або "msecond", це означає, 
+            # що світло дадуть о :30, а відключення закінчується о :00
+            if status in ("second", "msecond"):
+                return _start[:3] + "00", ""
+            
+            return _start, "" # Це час початку "світлої" години
+    
     # 2. Якщо дійшли до 24:00, перевіряємо завтра
     for i in range(0, 24):
         hour_key = str(i + 1)
         status = schedule_tomorrow.get(hour_key)
         
-        if status not in OUTAGE_STATES:
-            # Знайшли кінець!
+        if status in POWER_ON_STATES:
             _start, end_time = get_time_range(hour_key, status, time_zone_map)
-            return end_time, " (наступного дня)"
+            
+            # Якщо поточна "світла" година має статус "second" або "msecond", це означає, 
+            # що світло дадуть о :30, а відключення закінчується о :00
+            if status in ("second", "msecond"):
+                return _start[:3] + "00", " (наступного дня)"
+                
+            return _start, " (наступного дня)"
 
     return "24:00", " (наступного дня)"
 
@@ -93,14 +116,15 @@ def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_in
 def parse_yellow_info(html_content: str):
     """Парсить інформацію з жовтої рамки, якщо вона є."""
     soup = BeautifulSoup(html_content, 'html.parser')
+    # ✅ ВИПРАВЛЕНО: Додана перевірка на class="discon-current-outage"
     yellow_div = soup.find('div', {'class': 'discon-current-outage'})
     
     if not yellow_div:
         return None
 
     # Причина
-    reason_element = yellow_div.find('p')
-    reason = reason_element.text.strip() if reason_element else None
+    reason_match = re.search(r'Причина:\s*(.*?)Час початку', yellow_div.text, re.DOTALL)
+    reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
     # Час початку
     start_time_match = re.search(r'Час початку –\s*(.*?)\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
@@ -110,7 +134,7 @@ def parse_yellow_info(html_content: str):
     end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(.*?)\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
     end_time = end_time_match.group(1).strip() if end_time_match else None
 
-    # Додамо суфікс " (наступного дня)" до кінця, якщо він переходить через ніч
+    # Додаємо суфікс " (наступного дня)" до кінця, якщо він переходить через ніч
     if start_time and end_time and end_time < start_time:
         end_time_suffix = " (наступного дня)"
     else:
@@ -272,3 +296,8 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
 
     except Exception as e:
         return {"status": "error", "message": f"Внутрішня помилка API: {str(e)}"}
+
+# --- Команда для запуску локально (для тестів) ---
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
