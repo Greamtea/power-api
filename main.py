@@ -46,61 +46,94 @@ def get_time_range(hour_key: str, status: str, time_zone_map: dict) -> (str, str
     
     return start_time, end_time
 
+def expand_schedule(raw_schedule: dict, time_zone_map: dict) -> dict:
+    """
+    Перетворює погодинний графік у 30-хвилинний формат.
+    Формат: "00:00": "off", "00:30": "off", "01:00": "on", "01:30": "on"
+    """
+    expanded_schedule = {}
+    for hour_key in range(1, 25):
+        h_key = str(hour_key)
+        status = raw_schedule.get(h_key)
+        
+        if not status or h_key not in time_zone_map:
+            continue
+            
+        start_hour = time_zone_map[h_key][1][:2]
+        
+        time_00 = f"{start_hour}:00"
+        time_30 = f"{start_hour}:30"
+        
+        if status == 'yes' or status == 'cell-non-scheduled':
+            expanded_schedule[time_00] = "on"
+            expanded_schedule[time_30] = "on"
+        elif status == 'no' or status == 'maybe':
+            expanded_schedule[time_00] = "off"
+            expanded_schedule[time_30] = "off"
+        elif status == 'first' or status == 'mfirst':
+            # Світла немає перші 30 хв (off-on)
+            expanded_schedule[time_00] = "off"
+            expanded_schedule[time_30] = "on"
+        elif status == 'second' or status == 'msecond':
+            # Світла немає другі 30 хв (on-off)
+            expanded_schedule[time_00] = "on"
+            expanded_schedule[time_30] = "off"
+
+    return expanded_schedule
+
+
 # ✅ ВИПРАВЛЕНА ФУНКЦІЯ find_block_end (Виправлення логіки 01:30)
 def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
     """
-    Знаходить час закінчення поточного блоку відключень, склеюючи послідовні години.
-    schedule_current: графік поточного дня.
-    schedule_next_day: графік наступного дня (для перевірки переходу через північ).
-    start_hour_index: час, з якого потрібно почати перевірку (0-23).
+    Знаходить час закінчення поточного блоку відключень, враховуючи 30-хвилинні інтервали.
+    start_hour_index: час, з якого почалося відключення (0-23).
     """
     
-    # 1. Склеюємо блок відключень на сьогодні
+    # Визначаємо початок відключення для коректного пошуку
+    start_hour_key = str(start_hour_index + 1)
+    start_status = schedule_current.get(start_hour_key)
+    
+    # 1. Шукаємо кінець сьогодні
     for i in range(start_hour_index, 24):
         hour_key = str(i + 1)
         status = schedule_current.get(hour_key)
         
-        # Якщо ми знаходимо годину, коли світло Є (або частково є)
         if status in POWER_ON_STATES or status is None:
-            # ✅ Найдено Включення!
-            _start_on, end_time_on = get_time_range(hour_key, status, time_zone_map)
+            # Знайшли годину, де світло є. Визначаємо точний час закінчення відключення.
             
-            # Проверяємо, чи був попередній блок повним (наприклад, 22-23:30)
-            prev_hour_key = str(i)
-            prev_status = schedule_current.get(prev_hour_key)
-
-            if prev_status in ("first", "mfirst"):
-                # Якщо попередня година була відключена тільки до :30, то кінець відключення о :30
-                _start_off, end_time_off = get_time_range(prev_hour_key, prev_status, time_zone_map)
-                return end_time_off, "" 
+            # Якщо поточна година 'XX:00' повністю "світла", відключення закінчилося о XX:00.
+            if status == 'yes' or status == 'cell-non-scheduled':
+                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
+                return _start_on, ""
             
-            # Якщо попередній час був повним вимкненням, кінець відключення – це початок поточної години.
-            return _start_on, "" 
+            # Якщо поточна година "світла перші 30 хвилин" (first/mfirst), 
+            # то відключення закінчилося о XX:00.
+            if status in ("first", "mfirst"):
+                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
+                return _start_on, ""
+            
+            # Якщо поточна година "світла другі 30 хвилин" (second/msecond),
+            # це означає, що відключення закінчилося о XX:30.
+            if status in ("second", "msecond"):
+                _start, end_time = get_time_range(hour_key, status, time_zone_map) # end_time = XX:30
+                return end_time, ""
             
     
-    # 2. Якщо дійшли до кінця сьогодні (24:00), перевіряємо завтра
+    # 2. Якщо дійшли до 24:00, перевіряємо завтра
     for i in range(0, 24):
         hour_key = str(i + 1)
         status = schedule_next_day.get(hour_key)
         
         if status in POWER_ON_STATES or status is None:
-            # ✅ Найдено Включення!
-            _start_on, end_time_on = get_time_range(hour_key, status, time_zone_map)
+            # Знайшли годину, де світло є.
+            _start_on, _ = get_time_range(hour_key, status, time_zone_map)
             
-            # Перевіряємо статус попередньої години
-            if i == 0:
-                 prev_status = schedule_current.get("24")
-            else:
-                prev_hour_key = str(i)
-                prev_status = schedule_next_day.get(prev_hour_key)
-            
-            # ✅ Виправлення: якщо попередня година була 30-хвилинним відключенням, 
-            # то кінець відключення був о :30 (наприклад, 01:30)
-            if prev_status in ("first", "mfirst"):
-                 prev_start, prev_end = get_time_range(prev_hour_key, prev_status, time_zone_map)
-                 return prev_end, " (наступного дня)"
-                 
-            return _start_on, " (наступного дня)"
+            if status == 'yes' or status == 'cell-non-scheduled' or status in ("first", "mfirst"):
+                return _start_on, " (наступного дня)"
+                
+            if status in ("second", "msecond"):
+                 _start, end_time = get_time_range(hour_key, status, time_zone_map)
+                 return end_time, " (наступного дня)"
 
     # Якщо відключення йде до кінця графіка
     return "24:00", " (наступного дня)"
@@ -194,14 +227,11 @@ def get_day_schedules(fact_data: dict, group_name: str, time_zone_map: dict, now
     schedule_today_raw = schedule_today_all_groups.get(group_name, {})
     schedule_tomorrow_raw = schedule_tomorrow_all_groups.get(group_name, {})
 
-    def format_schedule(raw_schedule: dict):
-        formatted = {}
-        for hour_key, status in raw_schedule.items():
-            if hour_key in time_zone_map:
-                formatted[hour_key] = status
-        return formatted
-        
-    return format_schedule(schedule_today_raw), format_schedule(schedule_tomorrow_raw)
+    # Форматування в 30-хвилинний формат для C#
+    today_schedule = expand_schedule(schedule_today_raw, time_zone_map)
+    tomorrow_schedule = expand_schedule(schedule_tomorrow_raw, time_zone_map)
+
+    return today_schedule, tomorrow_schedule
 
 # --- Головний метод (ендпоіінт) ---
 @app.get("/check")
@@ -337,6 +367,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         }
 
     except Exception as e:
+        # ✅ Виправлено: українське повідомлення про внутрішню помилку
         return {"status": "error", "message": f"Внутрішня помилка API: {str(e)}"}
 
 # --- Команда для запуску локально (для тестів) ---
