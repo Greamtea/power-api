@@ -19,9 +19,8 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 OUTAGE_STATES = ("no", "first", "second", "mfirst", "msecond", "maybe")
 POWER_ON_STATES = ("yes", "cell-non-scheduled")
 
-# --- Допоміжні функції ---
+# --- Допоміжні функції (Винесені вперед для уникнення помилки 'not defined') ---
 
-# Ця функція тепер використовується ТІЛЬКИ для розширення графіка, а не для логіки статусу API.
 def is_off_now(status: str, minute: int) -> bool:
     """Перевіряє, чи вимкнено світло в поточну хвилину."""
     if status in ('no', 'maybe'):
@@ -78,13 +77,89 @@ def expand_schedule(raw_schedule: dict, time_zone_map: dict) -> dict:
         elif status == 'first' or status == 'mfirst':
             # Світла немає перші 30 хв (off-on)
             expanded_schedule[time_00] = status_off
-            expanded_schedule[time_30] = status_on
+            expanded_schedule[time_30] = "on"
         elif status == 'second' or status == 'msecond':
             # Світла немає другі 30 хв (on-off)
-            expanded_schedule[time_00] = status_on
+            expanded_schedule[time_00] = "on"
             expanded_schedule[time_30] = status_off
 
     return expanded_schedule
+
+def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_index: int, time_zone_map: dict) -> (str, str):
+    """
+    Знаходить час закінчення поточного блоку відключень, враховуючи 30-хвилинні інтервали.
+    start_hour_index: час, з якого почалося відключення (0-23).
+    """
+    
+    # 1. Шукаємо кінець сьогодні
+    for i in range(start_hour_index, 24):
+        hour_key = str(i + 1)
+        status = schedule_current.get(hour_key)
+        
+        if status in POWER_ON_STATES or status is None:
+            # Знайшли годину, де світло є. Визначаємо точний час закінчення відключення.
+            
+            if status == 'yes' or status == 'cell-non-scheduled':
+                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
+                return _start_on, ""
+            
+            if status in ("first", "mfirst"):
+                _start_on, _ = get_time_range(hour_key, status, time_zone_map)
+                return _start_on, ""
+            
+            if status in ("second", "msecond"):
+                _start, end_time = get_time_range(hour_key, status, time_zone_map) # end_time = XX:30
+                return end_time, ""
+            
+    
+    # 2. Якщо дійшли до 24:00, перевіряємо завтра
+    for i in range(0, 24):
+        hour_key = str(i + 1)
+        status = schedule_next_day.get(hour_key)
+        
+        if status in POWER_ON_STATES or status is None:
+            # Знайшли годину, де світло є.
+            _start_on, _ = get_time_range(hour_key, status, time_zone_map)
+            
+            if status == 'yes' or status == 'cell-non-scheduled' or status in ("first", "mfirst"):
+                return _start_on, " (наступного дня)"
+                
+            if status in ("second", "msecond"):
+                 _start, end_time = get_time_range(hour_key, status, time_zone_map)
+                 return end_time, " (наступного дня)"
+
+    # Якщо відключення йде до кінця графіка
+    return "24:00", " (наступного дня)"
+
+def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_index: int, time_zone_map: dict) -> (str, str, str):
+    """Знаходить час початку та кінця НАСТУПНОГО блоку."""
+    
+    # 1. Шукаємо ПОЧАТОК наступного блоку СЬОГОДНІ
+    for i in range(start_hour_index + 1, 24): 
+        hour_key = str(i + 1)
+        status = schedule_today.get(hour_key)
+        
+        if status in OUTAGE_STATES:
+            start_time, _ = get_time_range(hour_key, status, time_zone_map)
+            
+            # Находимо кінець цього блоку, використовуючи schedule_tomorrow
+            end_time, end_day_suffix = find_block_end(schedule_today, schedule_tomorrow, i, time_zone_map)
+            return start_time, end_time, end_day_suffix
+
+    # 2. Якщо СЬОГОДНІ більше нічого немає, шукаємо НАЧАЛО блока ЗАВТРА
+    for i in range(0, 24):
+        hour_key = str(i + 1)
+        status = schedule_tomorrow.get(hour_key)
+        
+        if status in OUTAGE_STATES:
+            start_time, _ = get_time_range(hour_key, status, time_zone_map)
+            
+            # Находимо кінець цього блоку (завтрашній графік)
+            end_time, _suffix = find_block_end(schedule_tomorrow, {}, i, time_zone_map) 
+            
+            return start_time, end_time, " (наступного дня)"
+
+    return None, None, None
 
 def parse_yellow_info(html_content: str):
     """Парсить інформацію з жовтої рамки (активне відключення)."""
@@ -213,7 +288,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         current_hour_index = now.hour
         current_minute = now.minute
         
-        # Поточний статус з графіку на сьогодні (для перевірки)
+        # Поточний статус з графіку на сьогодні
         raw_schedule_today = fact.get("data", {}).get(str(fact.get("today", 0)), {}).get(group_name, {})
         current_status_raw = raw_schedule_today.get(str(current_hour_index + 1))
         
@@ -225,7 +300,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1 - Фактичні відключення) ---
         yellow_data = parse_yellow_info(json_data.get("content", ""))
         
-        # ✅ ВИПРАВЛЕННЯ ЛОГІКИ: Якщо жовта рамка є, повертаємо її дані.
+        # ✅ ЛОГІКА: Якщо жовта рамка є, повертаємо її дані.
         if yellow_data and yellow_data['is_active_outage']:
              return {
                 "status": "warning",
@@ -251,6 +326,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         if is_currently_off_by_schedule:
             
             start_time, _ = get_time_range(str(current_hour_index + 1), current_status_raw, time_zone_map)
+            # Примітка: find_block_end все ще може мати помилку з 30-хвилинними блоками на межі.
             block_end, end_day_suffix = find_block_end(raw_schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
 
             return {
