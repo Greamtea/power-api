@@ -160,18 +160,20 @@ def find_next_block(schedule_today: dict, schedule_tomorrow: dict, start_hour_in
 def parse_yellow_info(html_content: str):
     """Парсить інформацію з жовтої рамки (активне відключення)."""
     soup = BeautifulSoup(html_content, 'html.parser')
+    # ✅ ВИПРАВЛЕНО: Шукаємо "discon-current-outage" - це і є жовта рамка
     yellow_div = soup.find('div', {'class': 'discon-current-outage'})
     
     if not yellow_div: return None
 
     # Причина
+    # Ми беремо текст до "Час початку" або "Орієнтовний час"
     reason_match = re.search(r'Причина:\s*(.*?)\s*Час початку', yellow_div.text, re.DOTALL)
     if not reason_match:
         reason_match = re.search(r'Причина:\s*(.*?)Орієнтовний час', yellow_div.text, re.DOTALL)
 
     reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
-    # ✅ ВИПРАВЛЕННЯ: Точний пошук часу початку
+    # Час початку (Час початку)
     start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
     start_time = start_time_match.group(1).strip() if start_time_match else None
     
@@ -179,7 +181,7 @@ def parse_yellow_info(html_content: str):
     end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
     end_time = end_time_match.group(1).strip() if end_time_match else None
 
-    # Проверяємо, чи переходить через північ (для повідомлення)
+    # Проверяємо, чи переходить через північ 
     end_time_suffix = ""
     if start_time and end_time:
         try:
@@ -193,7 +195,7 @@ def parse_yellow_info(html_content: str):
     return {
         "is_active_outage": True,
         "reason": reason,
-        "start_time": start_time, # ✅ Використовуємо видобутий час
+        "start_time": start_time, 
         "end_time": end_time,
         "end_time_suffix": end_time_suffix
     }
@@ -302,6 +304,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1 - Фактичні відключення) ---
         yellow_data = parse_yellow_info(json_data.get("content", ""))
         
+        # ✅ ВИПРАВЛЕННЯ: Якщо жовта рамка є, повертаємо її дані, ІГНОРУЮЧИ графік!
         if yellow_data and yellow_data['is_active_outage']:
              return {
                 "status": "warning",
