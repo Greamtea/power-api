@@ -170,6 +170,7 @@ def parse_yellow_info(html_content: str):
     reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
     # Час початку (Час початку)
+    # ✅ ВИПРАВЛЕННЯ: Спрощений regex для часу (тільки 00:00)
     start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})', yellow_div.text)
     start_time = start_time_match.group(1).strip() if start_time_match else None
     
