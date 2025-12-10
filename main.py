@@ -171,12 +171,12 @@ def parse_yellow_info(html_content: str):
 
     reason = reason_match.group(1).strip() if reason_match else "Невідома причина"
     
-    # Час початку (Час початку)
-    start_time_match = re.search(r'Час початку –\s*(.*?)\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
+    # ✅ ВИПРАВЛЕННЯ: Точний пошук часу початку
+    start_time_match = re.search(r'Час початку –\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
     start_time = start_time_match.group(1).strip() if start_time_match else None
     
     # Час відновлення (Орієнтовний час відновлення)
-    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(.*?)\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
+    end_time_match = re.search(r'Орієнтовний час відновлення електроенергії –\s*до\s*(\d{2}:\d{2})\s*\d{2}\.\d{2}\.\d{4}', yellow_div.text)
     end_time = end_time_match.group(1).strip() if end_time_match else None
 
     # Проверяємо, чи переходить через північ (для повідомлення)
@@ -193,7 +193,7 @@ def parse_yellow_info(html_content: str):
     return {
         "is_active_outage": True,
         "reason": reason,
-        "start_time": end_time_match,
+        "start_time": start_time, # ✅ Використовуємо видобутий час
         "end_time": end_time,
         "end_time_suffix": end_time_suffix
     }
@@ -308,7 +308,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
                 "group": group_name,
                 "today_schedule": schedule_today,
                 "tomorrow_schedule": schedule_tomorrow,
-                "active_outage_info": { # ✅ Додаємо повну інформацію з жовтої рамки
+                "active_outage_info": { 
                     "reason": yellow_data['reason'],
                     "start_time": yellow_data['start_time'],
                     "end_time": yellow_data['end_time'],
@@ -334,7 +334,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
                 "group": group_name,
                 "today_schedule": schedule_today,
                 "tomorrow_schedule": schedule_tomorrow,
-                "active_outage_info": { # ✅ Додаємо інформацію про поточне планове відключення
+                "active_outage_info": { # ✅ Інформація про поточне планове відключення
                     "reason": "Планове (Згідно з графіком)",
                     "start_time": start_time,
                     "end_time": block_end,
