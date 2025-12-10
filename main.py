@@ -95,19 +95,14 @@ def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_i
         if status in POWER_ON_STATES or status is None:
             # Знайшли годину, де світло є. Визначаємо точний час закінчення відключення.
             
-            # Якщо поточна година 'XX:00' повністю "світла", відключення закінчилося о XX:00.
             if status == 'yes' or status == 'cell-non-scheduled':
                 _start_on, _ = get_time_range(hour_key, status, time_zone_map)
                 return _start_on, ""
             
-            # Якщо поточна година "світла перші 30 хвилин" (first/mfirst), 
-            # то відключення закінчилося о XX:00.
             if status in ("first", "mfirst"):
                 _start_on, _ = get_time_range(hour_key, status, time_zone_map)
                 return _start_on, ""
             
-            # Якщо поточна година "світла другі 30 хвилин" (second/msecond),
-            # це означає, що відключення закінчилося о XX:30.
             if status in ("second", "msecond"):
                 _start, end_time = get_time_range(hour_key, status, time_zone_map) # end_time = XX:30
                 return end_time, ""
@@ -198,7 +193,7 @@ def parse_yellow_info(html_content: str):
     return {
         "is_active_outage": True,
         "reason": reason,
-        "start_time": start_time,
+        "start_time": end_time_match,
         "end_time": end_time,
         "end_time_suffix": end_time_suffix
     }
@@ -288,7 +283,23 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # 3. Отримуємо повні графіки на сьогодні та завтра
         schedule_today, schedule_tomorrow = get_day_schedules(fact, group_name, time_zone_map, now)
         
-        # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1) ---
+        # ---
+        # Визначаємо поточний статус, перевіряючи, чи активне відключення
+        # ---
+        
+        current_hour_index = now.hour
+        current_minute = now.minute
+        
+        # Поточний статус з графіку на сьогодні
+        raw_schedule_today = fact.get("data", {}).get(str(fact.get("today", 0)), {}).get(group_name, {})
+        current_status_raw = raw_schedule_today.get(str(current_hour_index + 1))
+        
+        is_currently_off_by_schedule = False
+        if current_status_raw:
+             is_currently_off_by_schedule = is_off_now(current_status_raw, current_minute)
+        
+        
+        # --- ✅ ПАРСИНГ ЖОВТОЇ РАМКИ (Пріоритет №1 - Фактичні відключення) ---
         yellow_data = parse_yellow_info(json_data.get("content", ""))
         
         if yellow_data and yellow_data['is_active_outage']:
@@ -306,25 +317,17 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
                 }
             }
         
-        # --- Крок 4: АНАЛІЗУЄМО ГРАФІК (Якщо немає жовтої рамки) ---
+        # --- Крок 4: АНАЛІЗУЄМО ГРАФІК (Якщо немає жовтої рамки, але є графік) ---
         
         if not schedule_today:
-             # ✅ Виправлено: Повертаємо "Світло є!"
              return {"status": "ok", "group": group_name, "today_schedule": {}, "tomorrow_schedule": {}}
 
 
-        # --- Аналіз графіка ---
-        current_hour_index = now.hour # 0-23
-        current_hour_key = str(current_hour_index + 1) # 1-24
-        current_minute = now.minute 
-
-        current_status = schedule_today.get(current_hour_key)
-        
         # 5. Перевіряємо, чи світло вимкнене ЗАРАЗ (за графіком)
-        if is_off_now(current_status, current_minute):
+        if is_currently_off_by_schedule:
             
-            # ❗ Оскільки ви просили видалити start_time/end_time з фінального об'єкту, 
-            # ми не повертаємо його тут, але залишаємо обчислення для розуміння.
+            start_time, _ = get_time_range(str(current_hour_index + 1), current_status_raw, time_zone_map)
+            block_end, end_day_suffix = find_block_end(raw_schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
 
             return {
                 "status": "warning",
@@ -333,15 +336,15 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
                 "tomorrow_schedule": schedule_tomorrow,
                 "active_outage_info": { # ✅ Додаємо інформацію про поточне планове відключення
                     "reason": "Планове (Згідно з графіком)",
-                    "start_time": get_time_range(current_hour_key, current_status, time_zone_map)[0],
-                    "end_time": find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)[0],
-                    "end_time_suffix": find_block_end(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)[1],
+                    "start_time": start_time,
+                    "end_time": block_end,
+                    "end_time_suffix": end_day_suffix,
                     "type": "Планове"
                 }
             }
 
         # 6. Якщо світло ЗАРАЗ є, шукаємо НАСТУПНЕ відключення
-        next_start, next_end, end_day_suffix = find_next_block(schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
+        next_start, next_end, end_day_suffix = find_next_block(raw_schedule_today, schedule_tomorrow, current_hour_index, time_zone_map)
         
         if next_start and next_end:
              return {
