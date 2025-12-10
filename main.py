@@ -89,10 +89,6 @@ def find_block_end(schedule_current: dict, schedule_next_day: dict, start_hour_i
     start_hour_index: час, з якого почалося відключення (0-23).
     """
     
-    # Визначаємо початок відключення для коректного пошуку
-    start_hour_key = str(start_hour_index + 1)
-    start_status = schedule_current.get(start_hour_key)
-    
     # 1. Шукаємо кінець сьогодні
     for i in range(start_hour_index, 24):
         hour_key = str(i + 1)
@@ -246,7 +242,7 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         soup = BeautifulSoup(response_main.text, 'html.parser')
         token_tag = soup.find('meta', {'name': 'csrf-token'})
         if not token_tag:
-            return {"status": "error", "message": "Не можу отримати токен (CSRF)."}
+            return {"status": "error", "message": "Не можу отримати токен (CSRS)."}
 
         fresh_token = token_tag['content']
         session.headers.update({
@@ -312,7 +308,8 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # --- Крок 4: АНАЛІЗУЄМО ГРАФІК (Якщо немає жовтої рамки) ---
         
         if not schedule_today:
-             return {"status": "ok", "message": "Відключень не заплановано.", "start_time": "", "end_time": "", "type": "Планове", "group": group_name, "today_schedule": {}, "tomorrow_schedule": {}}
+             # ✅ Виправлено: Повертаємо "Світло є!"
+             return {"status": "ok", "message": "Світло є!", "start_time": "", "end_time": "", "type": "Планове (Згідно з графіком)", "group": group_name, "today_schedule": {}, "tomorrow_schedule": {}}
 
 
         # --- Аналіз графіка ---
@@ -357,7 +354,8 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         # 7. Якщо сьогодні і завтра нічого немає
         return {
             "status": "ok",
-            "message": "Відключень не заплановано",
+            # ✅ Виправлено: Повертаємо "Світло є!"
+            "message": "Світло є!", 
             "start_time": "",
             "end_time": "",
             "type": "Планове (Згідно з графіком)",
@@ -367,7 +365,6 @@ async def check_power_outage(city: str = "", street: str = "", house: str = ""):
         }
 
     except Exception as e:
-        # ✅ Виправлено: українське повідомлення про внутрішню помилку
         return {"status": "error", "message": f"Внутрішня помилка API: {str(e)}"}
 
 # --- Команда для запуску локально (для тестів) ---
